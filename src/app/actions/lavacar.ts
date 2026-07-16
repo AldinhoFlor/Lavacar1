@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { modoSemLogin } from "@/lib/modo";
 import { round2, toISODate } from "@/lib/lavacar/format";
 import type {
   FormaPagamento,
@@ -22,11 +24,39 @@ type ActionResult<T = unknown> = ActionErro | ActionOk<T>;
 // Não confiar apenas em RLS.
 // =============================================================================
 
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+// Client de mutação: no modo sem login usa o admin (service role, bypassa RLS);
+// caso contrário, o client server autenticado (protegido por RLS).
+async function getDb(): Promise<SupabaseClient> {
+  if (modoSemLogin()) return createAdminClient() as unknown as SupabaseClient;
+  return createClient();
+}
+
+/** id da empresa única (a primeira criada) — base da autorização no modo sem login. */
+async function empresaUnicaId(supabase: SupabaseClient): Promise<string | null> {
+  const { data } = await supabase
+    .from("lc_empresas")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string) ?? null;
+}
+
 /**
  * Verifica se o usuário logado é membro da empresa. Helper de autorização
  * usado por toda mutação. Exportado por ser um Server Action ("use server").
+ *
+ * No modo sem login não há membros: autoriza quando a empresa é a única (a
+ * primeira criada).
  */
 export async function isMembroDaEmpresa(empresaId: string): Promise<boolean> {
+  if (modoSemLogin()) {
+    const supabase = await getDb();
+    return (await empresaUnicaId(supabase)) === empresaId;
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -43,12 +73,24 @@ export async function isMembroDaEmpresa(empresaId: string): Promise<boolean> {
   return !!data;
 }
 
-type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
-
-/** Garante user autenticado + membro da empresa. Retorna o userId ou um erro. */
+/**
+ * Garante autorização para mutar a empresa. Retorna o userId (null no modo sem
+ * login) + o client a usar, ou um erro.
+ *
+ * No modo sem login pula auth.getUser() e a checagem de membro: usa o client
+ * admin e exige apenas que a empresa seja a única (a primeira criada).
+ */
 async function autorizar(
   empresaId: string
-): Promise<{ userId: string; supabase: SupabaseClient } | ActionErro> {
+): Promise<{ userId: string | null; supabase: SupabaseClient } | ActionErro> {
+  if (modoSemLogin()) {
+    const supabase = await getDb();
+    const unica = await empresaUnicaId(supabase);
+    if (!unica) return { error: "Nenhum lava-rápido cadastrado" };
+    if (empresaId !== unica) return { error: "Sem permissão nesta empresa" };
+    return { userId: null, supabase };
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -101,17 +143,70 @@ const SEED_CATEGORIAS: { nome: string; tipo: TipoMovimentacao }[] = [
   { nome: "Outras despesas", tipo: "saida" },
 ];
 
+/** Popula serviços e categorias padrão da empresa recém-criada. */
+async function seedEmpresa(
+  supabase: SupabaseClient,
+  empresaId: string
+): Promise<ActionErro | null> {
+  const { error: errServ } = await supabase.from("lc_servicos").insert(
+    SEED_SERVICOS.map((s, i) => ({
+      empresa_id: empresaId,
+      nome: s.nome,
+      preco: round2(s.preco),
+      ativo: true,
+      ordem: i,
+    }))
+  );
+  if (errServ) return { error: errServ.message };
+
+  const { error: errCat } = await supabase.from("lc_categorias").insert(
+    SEED_CATEGORIAS.map((c, i) => ({
+      empresa_id: empresaId,
+      nome: c.nome,
+      tipo: c.tipo,
+      ordem: i,
+    }))
+  );
+  if (errCat) return { error: errCat.message };
+
+  return null;
+}
+
 export async function criarEmpresa(
   nome: string
 ): Promise<ActionResult<{ empresaId: string }>> {
+  const nomeLimpo = nome.trim();
+  if (!nomeLimpo) return { error: "Informe o nome do lava-rápido" };
+
+  // Modo sem login: single-empresa. Cria a empresa SEM membro (criado_por null)
+  // e sem inserir em lc_membros; se já existe uma, bloqueia.
+  if (modoSemLogin()) {
+    const supabase = await getDb();
+    const jaExiste = await empresaUnicaId(supabase);
+    if (jaExiste) return { error: "Você já tem um lava-rápido cadastrado" };
+
+    const { data: empresa, error: errEmpresa } = await supabase
+      .from("lc_empresas")
+      .insert({ nome: nomeLimpo, criado_por: null })
+      .select("id")
+      .single();
+    if (errEmpresa || !empresa) {
+      return { error: errEmpresa?.message ?? "Falha ao criar empresa" };
+    }
+    const empresaId = empresa.id as string;
+
+    const errSeed = await seedEmpresa(supabase, empresaId);
+    if (errSeed) return errSeed;
+
+    revalidarLavacar();
+    return { ok: true, empresaId };
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: "Não autenticado" };
-
-  const nomeLimpo = nome.trim();
-  if (!nomeLimpo) return { error: "Informe o nome do lava-rápido" };
 
   // Falha limpa se o user já tem empresa.
   const { data: jaMembro } = await supabase
@@ -141,28 +236,9 @@ export async function criarEmpresa(
   });
   if (errMembro) return { error: errMembro.message };
 
-  // 3) Seed de serviços
-  const { error: errServ } = await supabase.from("lc_servicos").insert(
-    SEED_SERVICOS.map((s, i) => ({
-      empresa_id: empresaId,
-      nome: s.nome,
-      preco: round2(s.preco),
-      ativo: true,
-      ordem: i,
-    }))
-  );
-  if (errServ) return { error: errServ.message };
-
-  // 4) Seed de categorias
-  const { error: errCat } = await supabase.from("lc_categorias").insert(
-    SEED_CATEGORIAS.map((c, i) => ({
-      empresa_id: empresaId,
-      nome: c.nome,
-      tipo: c.tipo,
-      ordem: i,
-    }))
-  );
-  if (errCat) return { error: errCat.message };
+  // 3) Seed de serviços e categorias
+  const errSeed = await seedEmpresa(supabase, empresaId);
+  if (errSeed) return errSeed;
 
   revalidarLavacar();
   return { ok: true, empresaId };
@@ -284,7 +360,7 @@ export async function registrarLavagem(
 export async function marcarLavagemPaga(
   lavagemId: string
 ): Promise<ActionResult> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data: lavagem } = await supabase
     .from("lc_lavagens")
     .select("*")
@@ -332,7 +408,7 @@ export async function marcarLavagemPaga(
 }
 
 export async function excluirLavagem(lavagemId: string): Promise<ActionResult> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data: lavagem } = await supabase
     .from("lc_lavagens")
     .select("empresa_id")
@@ -436,7 +512,7 @@ export async function atualizarMovimentacao(
   id: string,
   patch: AtualizarMovimentacaoPatch
 ): Promise<ActionResult> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data: mov } = await supabase
     .from("lc_movimentacoes")
     .select("empresa_id")
@@ -480,7 +556,7 @@ export async function atualizarMovimentacao(
 }
 
 export async function excluirMovimentacao(id: string): Promise<ActionResult> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data: mov } = await supabase
     .from("lc_movimentacoes")
     .select("empresa_id")

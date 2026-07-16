@@ -1,7 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { modoSemLogin } from "@/lib/modo";
 
 export async function updateSession(request: NextRequest) {
+  // Modo sem login: sem sessão obrigatória — deixa passar tudo.
+  // (Roda no edge: NÃO importar o client admin aqui; só lemos a env var.)
+  if (modoSemLogin()) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(

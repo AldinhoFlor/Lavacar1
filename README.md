@@ -22,40 +22,51 @@ App simples para **controlar o caixa do seu lava-rápido** pelo celular. Registr
 
 ## Como colocar no ar (passo a passo)
 
-Você vai usar dois serviços **gratuitos**: o **Supabase** (banco de dados + login) e a **Vercel** (para publicar o app na internet). Não precisa saber programar.
+Você vai usar dois serviços **gratuitos**: o **Supabase** (banco de dados) e a **Vercel** (para publicar o app na internet). Não precisa saber programar.
 
-### Parte 1 — Criar o banco de dados no Supabase
+> ⚠️ **Atenção — o app já vem no "modo sem login"** (`MODO_SEM_LOGIN=true`). Isso significa que **qualquer pessoa com o link acessa os seus dados**, sem pedir e-mail ou senha. É ótimo para uso próprio de **um único lava-rápido**. Se um dia você quiser **vender o app para outros lava-rápidos**, basta **desligar o modo sem login** (remova a variável `MODO_SEM_LOGIN` ou deixe-a diferente de `true`): o app volta a **exigir conta** e a separar os dados de cada empresa.
+
+### Parte 1 — Criar seu banco grátis do zero (Supabase)
+
+Se você **ainda não tem** um projeto no Supabase, faça assim:
 
 1. Acesse **https://supabase.com** e clique em **Start your project** / **Sign up**. Crie a conta (dá para entrar com o Google/GitHub).
 2. Clique em **New project**.
-3. Dê um nome (ex.: `lavacar`), crie uma **senha do banco** (guarde essa senha) e escolha a região mais perto de você (ex.: *South America (São Paulo)*). Clique em **Create new project** e espere ~1 minuto.
-4. No menu da esquerda, clique em **SQL Editor** (ícone de terminal).
-5. Clique em **New query**.
+3. Preencha:
+   - **Name (nome):** algo como `lavacar`.
+   - **Database Password (senha do banco):** crie uma senha forte e **guarde**.
+   - **Region (região):** escolha *South America (São Paulo)* (mais perto = mais rápido).
+4. Clique em **Create new project** e espere ~1 minuto até o projeto ficar pronto.
+5. No menu da esquerda, clique em **SQL Editor** (ícone de terminal) → **New query**.
 6. Abra o arquivo **`supabase/schema.sql`** deste projeto, **copie todo o conteúdo** e **cole** na caixa de texto.
 7. Clique em **Run** (ou aperte Ctrl+Enter). Deve aparecer *Success*. Pronto: as tabelas foram criadas.
-8. Agora pegue suas chaves: menu da esquerda → **Project Settings** (engrenagem) → **API** (ou **Data API**). Deixe essa página aberta, você vai precisar de dois valores:
+8. Agora pegue suas chaves: menu da esquerda → **Project Settings** (engrenagem) → **API**. Deixe essa página aberta — você vai precisar de **três** valores:
    - **Project URL** (algo como `https://xxxxxxxx.supabase.co`)
-   - **anon public** key (uma chave longa)
+   - **anon public** key (uma chave longa — pode ficar no navegador)
+   - **service_role** key (na seção *Project API keys*; é **secreta**, usada só no servidor — **nunca** exponha no navegador)
 
-### Parte 2 — Criar um usuário (seu login)
+### Parte 2 — Publicar o app na Vercel
 
-1. No Supabase, menu da esquerda → **Authentication** → **Users**.
-2. Clique em **Add user** → **Create new user**.
-3. Digite seu **e-mail** e uma **senha**. Marque para confirmar o e-mail automaticamente se a opção aparecer. Clique em **Create user**.
-4. Esse será o e-mail e senha que você usará para entrar no app.
-
-### Parte 3 — Publicar o app na Vercel
-
-1. Coloque este projeto no **GitHub** (se ainda não estiver). Se não souber, na Vercel dá para importar de várias formas — o mais comum é ter o código no GitHub.
+1. Coloque este projeto no **GitHub** (se ainda não estiver). Na Vercel dá para importar de várias formas — o mais comum é ter o código no GitHub.
 2. Acesse **https://vercel.com** e entre com sua conta do GitHub.
 3. Clique em **Add New...** → **Project** e **importe** o repositório do LavaCar.
-4. Antes de finalizar, abra **Environment Variables** e adicione as **duas** variáveis (use os valores da Parte 1, item 8):
+4. Antes de finalizar, abra **Environment Variables** e adicione as **quatro** variáveis (use os valores da Parte 1, item 8):
    - Nome: `NEXT_PUBLIC_SUPABASE_URL` — Valor: a **Project URL**
    - Nome: `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Valor: a chave **anon public**
+   - Nome: `SUPABASE_SERVICE_ROLE_KEY` — Valor: a chave **service_role** (secreta)
+   - Nome: `MODO_SEM_LOGIN` — Valor: `true`
 5. Clique em **Deploy** e espere terminar.
-6. A Vercel vai te dar um endereço (ex.: `https://lavacar-seu-nome.vercel.app`). Abra no celular, faça **login** com o e-mail e senha da Parte 2. Pronto! 🎉
+6. A Vercel vai te dar um endereço (ex.: `https://lavacar-seu-nome.vercel.app`). Abra no celular: o app entra **direto**, sem tela de login, e pede o **nome do seu lava-rápido** no primeiro acesso. Pronto! 🎉
 
 > Dica: adicione o site à tela inicial do celular (menu do navegador → "Adicionar à tela de início") para abrir como se fosse um aplicativo.
+
+### E quando eu quiser vender para outros lava-rápidos?
+
+O caminho de login continua pronto no código. Para reativá-lo:
+
+1. Na Vercel, em **Environment Variables**, **remova** `MODO_SEM_LOGIN` (ou troque o valor para algo diferente de `true`) e faça um novo **Deploy**.
+2. Crie o(s) usuário(s) em **Supabase → Authentication → Users → Add user** (e-mail + senha).
+3. A partir daí o app volta a pedir **login**, e cada empresa só enxerga os próprios dados (protegido por **RLS**).
 
 ---
 
@@ -100,7 +111,9 @@ npm install
 
 # 2. criar o arquivo de variáveis
 cp .env.example .env.local
-# depois abra .env.local e preencha as duas variáveis do Supabase (sem o # na frente)
+# depois abra .env.local e preencha as variáveis do Supabase.
+# No modo sem login (padrão), preencha: NEXT_PUBLIC_SUPABASE_URL,
+# NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY e MODO_SEM_LOGIN=true.
 
 # 3. rodar
 npm run dev
@@ -117,7 +130,16 @@ Abra **http://localhost:3000** no navegador.
 - **Supabase** (Auth + Postgres com **RLS** em todas as tabelas)
 - Gráficos com **Recharts**, animações com **Framer Motion**, avisos com **Sonner**, ícones **Lucide**
 - Todas as tabelas usam o prefixo `lc_` e são criadas de forma **idempotente** por `supabase/schema.sql`
-- A senha/URL do Supabase ficam apenas nas variáveis `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- **Variáveis de ambiente:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (secreta, só servidor) e `MODO_SEM_LOGIN`
+
+### Modo sem login (uso pessoal, single-empresa)
+
+Controlado pela função central `modoSemLogin()` em `src/lib/modo.ts`, que lê `MODO_SEM_LOGIN`.
+
+- **`MODO_SEM_LOGIN=true`** (padrão atual): o app **não exige login**. Todo o acesso a dados no servidor passa a usar um client **admin** (`src/lib/supabase/admin.ts`, com a `service_role`, que **bypassa o RLS**). Vira **single-empresa**: `getEmpresaDoUsuario()` retorna a **primeira empresa** criada (papel `dono`); sem nenhuma, cai no onboarding. Autorização é feita em código (o registro tem de pertencer à empresa única). O schema **não muda**.
+- **Sem a variável (ou ≠ `true`):** caminho **autenticado** original — Supabase Auth + RLS, multi-empresa via `lc_membros`. Middleware, layout e onboarding voltam a exigir sessão.
+
+> ⚠️ No modo sem login **não há isolamento por usuário**: quem tiver o link vê os dados. Use só para o seu próprio lava-rápido. Para vender a clientes, desligue `MODO_SEM_LOGIN`.
 
 ### Estrutura de pastas
 ```
@@ -131,7 +153,8 @@ src/
   components/lavacar/ telas e modais do app
   components/ui/      componentes reutilizáveis (modal, etc.)
   lib/lavacar/        tipos, formatação e consultas
-  lib/supabase/       conexão com o Supabase
+  lib/supabase/       conexão com o Supabase (server, client, middleware, admin)
+  lib/modo.ts         modoSemLogin() — liga/desliga o modo sem login
   app/actions/        ações de servidor (salvar/editar/excluir)
 supabase/schema.sql   banco de dados (rode no Supabase)
 ```

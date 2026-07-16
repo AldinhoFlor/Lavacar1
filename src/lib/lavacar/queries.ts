@@ -4,6 +4,8 @@
 // =============================================================================
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { modoSemLogin } from "@/lib/modo";
 import {
   intervaloMes,
   intervaloMesAno,
@@ -45,6 +47,15 @@ function normalizarLavagem(row: Lavagem): Lavagem {
   return { ...row, valor: num(row.valor) };
 }
 
+// Client de leitura: no modo sem login usa o admin (service role, bypassa RLS);
+// caso contrário, o client server autenticado (protegido por RLS).
+type Db = Awaited<ReturnType<typeof createClient>>;
+
+async function getDb(): Promise<Db> {
+  if (modoSemLogin()) return createAdminClient() as unknown as Db;
+  return createClient();
+}
+
 // -----------------------------------------------------------------------------
 // Empresa / usuário
 // -----------------------------------------------------------------------------
@@ -52,8 +63,24 @@ function normalizarLavagem(row: Lavagem): Lavagem {
 /**
  * Empresa (e papel) do usuário logado. `null` se não autenticado ou sem empresa
  * — quem chama redireciona para /login ou /onboarding.
+ *
+ * No modo sem login vira "empresa única": retorna a primeira empresa criada
+ * (order by created_at asc limit 1) com papel 'dono', ou null se não existir
+ * nenhuma (→ onboarding).
  */
 export async function getEmpresaDoUsuario(): Promise<EmpresaComPapel | null> {
+  if (modoSemLogin()) {
+    const supabase = await getDb();
+    const { data: empresa } = await supabase
+      .from("lc_empresas")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!empresa) return null;
+    return { empresa: empresa as Empresa, papel: "dono" };
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -87,7 +114,7 @@ export async function getEmpresaDoUsuario(): Promise<EmpresaComPapel | null> {
 // -----------------------------------------------------------------------------
 
 export async function getServicos(empresaId: string): Promise<Servico[]> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data } = await supabase
     .from("lc_servicos")
     .select("*")
@@ -98,7 +125,7 @@ export async function getServicos(empresaId: string): Promise<Servico[]> {
 }
 
 export async function getCategorias(empresaId: string): Promise<Categoria[]> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data } = await supabase
     .from("lc_categorias")
     .select("*")
@@ -123,7 +150,7 @@ export async function getMovimentacoes(
   empresaId: string,
   filtro: FiltroMovimentacoes
 ): Promise<Movimentacao[]> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   let query = supabase
     .from("lc_movimentacoes")
     .select("*")
@@ -149,7 +176,7 @@ export async function getLavagens(
   empresaId: string,
   filtro: FiltroLavagens
 ): Promise<Lavagem[]> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data } = await supabase
     .from("lc_lavagens")
     .select("*")
@@ -166,7 +193,7 @@ export async function getLavagens(
 export async function getLavagensPendentes(
   empresaId: string
 ): Promise<Lavagem[]> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const { data } = await supabase
     .from("lc_lavagens")
     .select("*")
@@ -186,7 +213,7 @@ export async function getMetricasDashboard(
   empresaId: string,
   ref: Date = new Date()
 ): Promise<MetricasDashboard> {
-  const supabase = await createClient();
+  const supabase = await getDb();
 
   const hojeISO = toISODate(ref);
   const mes = intervaloMes(ref);
@@ -289,7 +316,7 @@ export async function getRelatorioMensal(
   ano: number,
   mes: number
 ): Promise<RelatorioMensal> {
-  const supabase = await createClient();
+  const supabase = await getDb();
   const range = intervaloMesAno(ano, mes);
 
   const [movsRes, lavRes] = await Promise.all([

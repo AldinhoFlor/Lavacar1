@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { modoSemLogin } from "@/lib/modo";
 import {
   getEmpresaDoUsuario,
   getServicos,
@@ -14,11 +15,14 @@ export default async function LavacarLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  // Caminho autenticado: exige sessão. No modo sem login isso é pulado.
+  if (!modoSemLogin()) {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) redirect("/login");
+  }
 
   const vinculo = await getEmpresaDoUsuario();
   if (!vinculo) redirect("/onboarding");
